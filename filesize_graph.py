@@ -30,8 +30,17 @@ bl_info = {
 import bpy
 import os
 import re
+from math import inf
 
 rexp = re.compile(r'([0-9]+)')
+
+def sizeof_fmt(num, suffix='B'):
+    '''From https://stackoverflow.com/a/1094933/4561348'''
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
 
 def create_curve_object(name):
     if not name in bpy.data.objects:
@@ -44,6 +53,8 @@ def create_curve_object(name):
 
 def visualize_size(name, basedir):
     frames = {}
+    min_frame = inf
+    min_size = inf
     max_frame = 0
     max_size = 0
 
@@ -56,16 +67,20 @@ def visualize_size(name, basedir):
 
         if int(frame_number) > max_frame:
             max_frame = frame_number
+        if int(frame_number) < min_frame:
+            min_frame = frame_number
 
         size = os.path.getsize(os.path.join(basedir, file))
 
         frames[frame_number] = size
         if size > max_size:
             max_size = size
+        if size < min_size:
+            min_size = size
 
-    for i in range(1, max_frame + 1):
+    for i in range(0, max_frame + 1):
         if not i in frames:
-            frames[i] = -1
+            frames[i] = -1.0
 
     obj = create_curve_object(name)
 
@@ -75,8 +90,12 @@ def visualize_size(name, basedir):
     spline.points.add(len(frames)-1)
     for i, (frame, size) in enumerate(frames.items()):
 #        print(frame, size)
-        spline.points[i].co.x = frame
-        spline.points[i].co.z = size / (max_size if size != -1.0 else 1) * 100
+        spline.points[frame].co.x = frame
+        spline.points[i].co.z = size
+        if size != -1.0 and max_size != 0.0:
+            spline.points[i].co.z /= max_size
+        spline.points[i].co.z *= 100
+    return (min_frame, min_size, max_frame, max_size)
 
 
 class FilesizeGraph(bpy.types.Operator):
@@ -93,7 +112,11 @@ class FilesizeGraph(bpy.types.Operator):
         for g in context.scene.filesize_graphs:
             print(g.dirpath)
             try:
-                visualize_size(g.name, g.dirpath)
+                min_frame, min_size, max_frame, max_size = visualize_size(g.name, g.dirpath)
+                g.min_frame = min_frame
+                g.min_size = min_size
+                g.max_frame = max_frame
+                g.max_size = max_size
             except FileNotFoundError:
                 self.report({"WARNING"}, 'Path not found: ' + g.name)
                 create_curve_object(g.name)
@@ -172,6 +195,17 @@ class FilesizeGraphPanel(bpy.types.Panel):
 
         layout.operator('lfs.filesize_graph')
 
+        if (
+                context.object is not None
+                and context.object.name in context.scene.filesize_graphs):
+            frames = len([p for p in context.object.data.splines[0].points if p.co.z != -100.0])
+            graph = context.scene.filesize_graphs[context.object.name]
+            box = layout.box()
+            col = box.column(align=True)
+            col.label(text="Frames: {}".format(frames))
+            col.label(text="Frame range: {:04}-{:04}".format(graph.min_frame, graph.max_frame))
+            col.label(text="Sizes: {} - {}".format(sizeof_fmt(graph.min_size), sizeof_fmt(graph.max_size)))
+
 def graph_update(self, context):
     if self.old_name in context.scene.objects:
         print('found')
@@ -184,6 +218,10 @@ class FilesizeGraphs(bpy.types.PropertyGroup):
     name = bpy.props.StringProperty(default='', update=graph_update)
     old_name = bpy.props.StringProperty(default='')
     dirpath = bpy.props.StringProperty(default='', subtype='DIR_PATH')
+    min_frame = bpy.props.IntProperty(default=0)
+    max_frame = bpy.props.IntProperty(default=0)
+    min_size = bpy.props.FloatProperty(default=0.0)
+    max_size = bpy.props.FloatProperty(default=0.0)
 
 
 def register():
