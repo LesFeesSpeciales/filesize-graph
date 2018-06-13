@@ -33,15 +33,27 @@ import re
 
 rexp = re.compile(r'([0-9]+)')
 
+def create_curve_object(name):
+    if not name in bpy.data.objects:
+        curve = bpy.data.curves.new(name, 'CURVE')
+        obj = bpy.data.objects.new(name, curve)
+        bpy.context.scene.objects.link(obj)
+    else:
+        obj = bpy.data.objects[name]
+    return obj
 
 def visualize_size(name, basedir):
-
     frames = {}
     max_frame = 0
     max_size = 0
 
     for file in os.listdir(basedir):
-        frame_number = int(rexp.findall(file)[-1])
+        try:
+            frame_number = int(rexp.findall(file)[-1])
+        except:
+            print('Could not parse file ' + file)
+            continue
+
         if int(frame_number) > max_frame:
             max_frame = frame_number
 
@@ -55,16 +67,7 @@ def visualize_size(name, basedir):
         if not i in frames:
             frames[i] = -1
 
-#    for frame, size in frames.items():
-#        txt.write('{:03d}'.format(frame) + ' ' + str(size))
-#        txt.write('\n')
-
-    if not name in bpy.data.objects:
-        curve = bpy.data.curves.new(name, 'CURVE')
-        obj = bpy.data.objects.new(name, curve)
-        bpy.context.scene.objects.link(obj)
-    else:
-        obj = bpy.data.objects[name]
+    obj = create_curve_object(name)
 
     obj.data.splines.clear()
     spline = obj.data.splines.new('POLY')
@@ -88,7 +91,12 @@ class FilesizeGraph(bpy.types.Operator):
 
     def execute(self, context):
         for g in context.scene.filesize_graphs:
-            visualize_size(g.name, g.dirpath)
+            print(g.dirpath)
+            try:
+                visualize_size(g.name, g.dirpath)
+            except FileNotFoundError:
+                self.report({"WARNING"}, 'Path not found: ' + g.name)
+                create_curve_object(g.name)
         return {"FINISHED"}
 
 
@@ -103,7 +111,16 @@ class FilesizeGraphAdd(bpy.types.Operator):
 
     def execute(self, context):
         context.scene.filesize_graphs.add()
-        context.scene.filesize_graphs[-1].name = "Graph"
+        if not "Graph" in context.scene.filesize_graphs:
+            name = "Graph"
+        else:
+            i = 1
+            while "Graph.{:03}".format(i) in context.scene.filesize_graphs:
+                i += 1
+            name = "Graph.{:03}".format(i)
+        context.scene.filesize_graphs[-1].name = name
+        context.scene.filesize_graphs[-1].old_name = name
+        create_curve_object(name)
         return {"FINISHED"}
 
 
@@ -120,6 +137,11 @@ class FilesizeGraphRemove(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        name = context.scene.filesize_graphs[self.index].name
+        if name in context.scene.objects:
+            obj = bpy.data.objects[name]
+            context.scene.objects.unlink(obj)
+            bpy.data.objects.remove(obj)
         context.scene.filesize_graphs.remove(self.index)
         return {"FINISHED"}
 
@@ -141,6 +163,8 @@ class FilesizeGraphPanel(bpy.types.Panel):
             split.prop(g, "name", text="")
             split.prop(g, "dirpath", text="")
             sub.operator("lfs.filesize_graph_remove", icon='X', text="").index = i
+            if g.name in context.scene.objects:
+                sub.prop(context.scene.objects[g.name], 'hide', text="")
         col = row.column()
 
         sub = col.column(align=True)
@@ -148,16 +172,24 @@ class FilesizeGraphPanel(bpy.types.Panel):
 
         layout.operator('lfs.filesize_graph')
 
+def graph_update(self, context):
+    if self.old_name in context.scene.objects:
+        print('found')
+        context.scene.objects[self.old_name].name = self.name
+        self.old_name = self.name
+    else:
+        create_curve_object(self.name)
 
-class Texture_Variations(bpy.types.PropertyGroup):
-    name = bpy.props.StringProperty(default='')
+class FilesizeGraphs(bpy.types.PropertyGroup):
+    name = bpy.props.StringProperty(default='', update=graph_update)
+    old_name = bpy.props.StringProperty(default='')
     dirpath = bpy.props.StringProperty(default='', subtype='DIR_PATH')
 
 
 def register():
-    bpy.utils.register_class(Texture_Variations)
+    bpy.utils.register_class(FilesizeGraphs)
     bpy.types.Scene.filesize_graphs = bpy.props.CollectionProperty(
-        name="Filesize Graphs", type=Texture_Variations)
+        name="Filesize Graphs", type=FilesizeGraphs)
     bpy.utils.register_module(__name__)
 
 def unregister():
