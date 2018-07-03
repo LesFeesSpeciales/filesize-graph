@@ -18,7 +18,6 @@
 
 bl_info = {
     "name": "Filesize Graph",
-    "description": "Les Fees Speciales",
     "author": "Les Fees Speciales",
     "version": (0, 0, 1),
     "blender": (2, 77, 0),
@@ -34,16 +33,18 @@ from math import inf
 
 rexp = re.compile(r'([0-9]+)')
 
+
 def sizeof_fmt(num, suffix='B'):
     '''From https://stackoverflow.com/a/1094933/4561348'''
-    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
 
+
 def create_curve_object(name):
-    if not name in bpy.data.objects:
+    if name not in bpy.data.objects:
         curve = bpy.data.curves.new(name, 'CURVE')
         obj = bpy.data.objects.new(name, curve)
         bpy.context.scene.objects.link(obj)
@@ -51,18 +52,32 @@ def create_curve_object(name):
         obj = bpy.data.objects[name]
     return obj
 
-def visualize_size(name, basedir):
+
+def get_name_and_frame(filename):
+    # try:
+    frame_number = rexp.findall(filename)[-1]
+    padding = len(frame_number)
+    pattern = filename.replace(frame_number, '{:0}' + str(padding))
+    frame_number = int(frame_number)
+    return pattern, frame_number
+    # except:
+    print('Could not parse file ' + filename)
+
+
+def visualize_size(name, filepath):
     frames = {}
     min_frame = inf
     min_size = inf
     max_frame = 0
     max_size = 0
 
+    basedir, filename = os.path.split(filepath)
+    base_pattern, frame_number = get_name_and_frame(filename)
+
     for file in os.listdir(basedir):
-        try:
-            frame_number = int(rexp.findall(file)[-1])
-        except:
-            print('Could not parse file ' + file)
+        pattern, frame_number = get_name_and_frame(file)
+        if pattern != base_pattern:
+            print(file)
             continue
 
         if int(frame_number) > max_frame:
@@ -89,7 +104,6 @@ def visualize_size(name, basedir):
     obj.data.dimensions = '3D'
     spline.points.add(len(frames)-1)
     for i, (frame, size) in enumerate(frames.items()):
-#        print(frame, size)
         spline.points[frame].co.x = frame
         spline.points[i].co.z = size
         if size != -1.0 and max_size != 0.0:
@@ -110,9 +124,8 @@ class FilesizeGraph(bpy.types.Operator):
 
     def execute(self, context):
         for g in context.scene.filesize_graphs:
-            print(g.dirpath)
             try:
-                min_frame, min_size, max_frame, max_size = visualize_size(g.name, g.dirpath)
+                min_frame, min_size, max_frame, max_size = visualize_size(g.name, g.filepath)
                 g.min_frame = min_frame
                 g.min_size = min_size
                 g.max_frame = max_frame
@@ -134,7 +147,7 @@ class FilesizeGraphAdd(bpy.types.Operator):
 
     def execute(self, context):
         context.scene.filesize_graphs.add()
-        if not "Graph" in context.scene.filesize_graphs:
+        if "Graph" not in context.scene.filesize_graphs:
             name = "Graph"
         else:
             i = 1
@@ -184,7 +197,7 @@ class FilesizeGraphPanel(bpy.types.Panel):
             sub = col.row(align=True)
             split = sub.split(percentage=0.2, align=True)
             split.prop(g, "name", text="")
-            split.prop(g, "dirpath", text="")
+            split.prop(g, "filepath", text="")
             sub.operator("lfs.filesize_graph_remove", icon='X', text="").index = i
             if g.name in context.scene.objects:
                 sub.prop(context.scene.objects[g.name], 'hide', text="")
@@ -206,6 +219,7 @@ class FilesizeGraphPanel(bpy.types.Panel):
             col.label(text="Frame range: {:04}-{:04}".format(graph.min_frame, graph.max_frame))
             col.label(text="Sizes: {} - {}".format(sizeof_fmt(graph.min_size), sizeof_fmt(graph.max_size)))
 
+
 def graph_update(self, context):
     if self.old_name in context.scene.objects:
         print('found')
@@ -214,10 +228,11 @@ def graph_update(self, context):
     else:
         create_curve_object(self.name)
 
+
 class FilesizeGraphs(bpy.types.PropertyGroup):
     name = bpy.props.StringProperty(default='', update=graph_update)
     old_name = bpy.props.StringProperty(default='')
-    dirpath = bpy.props.StringProperty(default='', subtype='DIR_PATH')
+    filepath = bpy.props.StringProperty(default='', subtype='FILE_PATH')
     min_frame = bpy.props.IntProperty(default=0)
     max_frame = bpy.props.IntProperty(default=0)
     min_size = bpy.props.FloatProperty(default=0.0)
@@ -230,8 +245,10 @@ def register():
         name="Filesize Graphs", type=FilesizeGraphs)
     bpy.utils.register_module(__name__)
 
+
 def unregister():
     bpy.utils.unregister_module(__name__)
+
 
 if __name__ == "__main__":
     register()
