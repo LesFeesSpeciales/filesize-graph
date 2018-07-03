@@ -54,22 +54,21 @@ def create_curve_object(name):
 
 
 def get_name_and_frame(filename):
-    # try:
     frame_number = rexp.findall(filename)[-1]
     padding = len(frame_number)
-    pattern = filename.replace(frame_number, '{:0}' + str(padding))
+    pattern = filename.replace(frame_number, '{:0' + str(padding) + '}')
     frame_number = int(frame_number)
     return pattern, frame_number
-    # except:
     print('Could not parse file ' + filename)
 
 
-def visualize_size(name, filepath):
+def visualize_size(g):
     frames = {}
     min_frame = inf
     min_size = inf
     max_frame = 0
     max_size = 0
+    filepath = g.filepath
 
     basedir, filename = os.path.split(filepath)
     base_pattern, frame_number = get_name_and_frame(filename)
@@ -77,7 +76,6 @@ def visualize_size(name, filepath):
     for file in os.listdir(basedir):
         pattern, frame_number = get_name_and_frame(file)
         if pattern != base_pattern:
-            print(file)
             continue
 
         if int(frame_number) > max_frame:
@@ -94,10 +92,10 @@ def visualize_size(name, filepath):
             min_size = size
 
     for i in range(0, max_frame + 1):
-        if not i in frames:
+        if i not in frames:
             frames[i] = -1.0
 
-    obj = create_curve_object(name)
+    obj = create_curve_object(g.name)
 
     obj.data.splines.clear()
     spline = obj.data.splines.new('POLY')
@@ -110,6 +108,62 @@ def visualize_size(name, filepath):
             spline.points[i].co.z /= max_size
         spline.points[i].co.z *= 100
     return (min_frame, min_size, max_frame, max_size)
+
+    g.min_frame = min_frame
+    g.min_size = min_size
+    g.max_frame = max_frame
+    g.max_size = max_size
+
+
+def graph_update(self, context):
+    if self.old_name in context.scene.objects:
+        context.scene.objects[self.old_name].name = self.name
+        self.old_name = self.name
+    else:
+        create_curve_object(self.name)
+
+
+class FilesizeGraphs(bpy.types.PropertyGroup):
+    name = bpy.props.StringProperty(default='', update=graph_update)
+    old_name = bpy.props.StringProperty(default='')
+    filepath = bpy.props.StringProperty(default='', subtype='FILE_PATH')
+    min_frame = bpy.props.IntProperty(default=0)
+    max_frame = bpy.props.IntProperty(default=0)
+    min_size = bpy.props.FloatProperty(default=0.0)
+    max_size = bpy.props.FloatProperty(default=0.0)
+
+
+class FSGDeleteFiles(bpy.types.Operator):
+    bl_idname = "lfs.fsg_delete_files"
+    bl_label = "Delete Selected Files"
+    bl_description = ""
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_CURVE'
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        graph = context.scene.filesize_graphs[context.object.name]
+        points = context.object.data.splines[0].points
+        basedir, filename = os.path.split(graph.filepath)
+        pattern, frame_number = get_name_and_frame(filename)
+        files_list = os.listdir(basedir)
+
+        for i, p in enumerate(points):
+            if p.select:
+                frame_filepath = os.path.join(basedir, pattern.format(i))
+                if pattern.format(i) in files_list:
+                    print('Deleting', frame_filepath)
+                    os.remove(frame_filepath)
+                else:
+                    self.report({"WARNING"}, "File " + pattern.format(i)+ " not found.")
+        visualize_size(graph)
+
+        return {"FINISHED"}
 
 
 class FilesizeGraph(bpy.types.Operator):
@@ -124,15 +178,7 @@ class FilesizeGraph(bpy.types.Operator):
 
     def execute(self, context):
         for g in context.scene.filesize_graphs:
-            try:
-                min_frame, min_size, max_frame, max_size = visualize_size(g.name, g.filepath)
-                g.min_frame = min_frame
-                g.min_size = min_size
-                g.max_frame = max_frame
-                g.max_size = max_size
-            except FileNotFoundError:
-                self.report({"WARNING"}, 'Path not found: ' + g.name)
-                create_curve_object(g.name)
+            visualize_size(g)
         return {"FINISHED"}
 
 
@@ -218,25 +264,8 @@ class FilesizeGraphPanel(bpy.types.Panel):
             col.label(text="Frames: {}".format(frames))
             col.label(text="Frame range: {:04}-{:04}".format(graph.min_frame, graph.max_frame))
             col.label(text="Sizes: {} - {}".format(sizeof_fmt(graph.min_size), sizeof_fmt(graph.max_size)))
-
-
-def graph_update(self, context):
-    if self.old_name in context.scene.objects:
-        print('found')
-        context.scene.objects[self.old_name].name = self.name
-        self.old_name = self.name
-    else:
-        create_curve_object(self.name)
-
-
-class FilesizeGraphs(bpy.types.PropertyGroup):
-    name = bpy.props.StringProperty(default='', update=graph_update)
-    old_name = bpy.props.StringProperty(default='')
-    filepath = bpy.props.StringProperty(default='', subtype='FILE_PATH')
-    min_frame = bpy.props.IntProperty(default=0)
-    max_frame = bpy.props.IntProperty(default=0)
-    min_size = bpy.props.FloatProperty(default=0.0)
-    max_size = bpy.props.FloatProperty(default=0.0)
+            col.separator()
+            col.operator('lfs.fsg_delete_files')
 
 
 def register():
